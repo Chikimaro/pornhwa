@@ -164,7 +164,18 @@ function get_chapter_link($chapter_id) {
     return ''; // Return an empty string if no chapter is found
 }
 
+// Get latest chapters with caching
 function get_latest_chapters($manga_id, $number_of_chapters = 3) {
+    // Create a transient key based on parameters
+    $transient_key = 'latest_chapters_' . $manga_id . '_' . $number_of_chapters;
+    
+    // Try to get cached result
+    $cached_chapters = get_transient($transient_key);
+    if ($cached_chapters !== false) {
+        return $cached_chapters;
+    }
+    
+    // If no cache, get from database
     global $wpdb;
 
     // Ensure that the manga ID is an integer
@@ -181,7 +192,10 @@ function get_latest_chapters($manga_id, $number_of_chapters = 3) {
         $manga_id,
         $number_of_chapters
     ));
-
+    
+    // Cache the result for 12 hours (43200 seconds)
+    set_transient($transient_key, $chapters, 12 * HOUR_IN_SECONDS);
+    
     return $chapters;
 }
 
@@ -302,8 +316,10 @@ function enqueue_manga_rating_scripts() {
             'nonce' => wp_create_nonce('manga_rating_nonce')
         ));
         
-        // Debug log
-        error_log('Manga rating scripts enqueued');
+        // Debug log only when WP_DEBUG is enabled
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('Manga rating scripts enqueued');
+        }
     }
 }
 add_action('wp_enqueue_scripts', 'enqueue_manga_rating_scripts');
@@ -386,11 +402,18 @@ add_action('wp_enqueue_scripts', 'enqueue_reading_history_scripts', 20); // High
 
 // Add this to verify script is enqueued
 add_action('wp_footer', function() {
-    global $wp_scripts;
-    error_log('Enqueued scripts: ' . print_r($wp_scripts->queue, true));
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        global $wp_scripts;
+        error_log('Enqueued scripts: ' . print_r($wp_scripts->queue, true));
+    }
 });
 // Custom debug function
 function rm_debug_log($message) {
+    // Early return if debugging is not enabled
+    if (!(defined('WP_DEBUG') && WP_DEBUG)) {
+        return;
+    }
+    
     $debug_file = WP_CONTENT_DIR . '/rm-debug.log';
     
     // Create the file if it doesn't exist
@@ -474,8 +497,12 @@ add_action('wp_ajax_remove_from_reading_history', 'remove_from_reading_history')
 
 function update_manga_last_read($manga_id) {
     $timestamp = current_time('timestamp');
-    // Debug output
-    error_log('Updating last read for manga ' . $manga_id . ' with timestamp: ' . $timestamp);
+    
+    // Debug output only when WP_DEBUG is enabled
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        error_log('Updating last read for manga ' . $manga_id . ' with timestamp: ' . $timestamp);
+    }
+    
     return update_post_meta($manga_id, 'last_read_date', $timestamp);
 }
 
@@ -487,8 +514,10 @@ function update_manga_reading_history($manga_id, $chapter_id) {
     // Store the date in MySQL format
     $timestamp = date('Y-m-d H:i:s');
     
-    // Debug log
-    error_log("Storing new timestamp: " . $timestamp);
+    // Debug log only when WP_DEBUG is enabled
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        error_log("Storing new timestamp: " . $timestamp);
+    }
     
     // Get current reading history
     $reading_history = get_user_meta($user_id, 'reading_history', true);
@@ -514,24 +543,32 @@ add_action('wp_manga_update_chapter_views', 'update_manga_reading_history', 10, 
 
 // Only add this new function for the AJAX handler
 function handle_clear_reading_history() {
-    // Add debugging
-    error_log('Clear reading history request received');
+    // Add debugging only when WP_DEBUG is enabled
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        error_log('Clear reading history request received');
+    }
     
     if (!is_user_logged_in()) {
-        error_log('User not logged in');
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('User not logged in');
+        }
         wp_send_json_error('Not logged in');
         return;
     }
 
     $user_id = get_current_user_id();
-    error_log('Attempting to clear history for user: ' . $user_id);
     
-    // Get the current history first to verify it exists
-    $current_history = get_user_meta($user_id, 'reading_history', true);
-    error_log('Current history: ' . print_r($current_history, true));
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        error_log('Attempting to clear history for user: ' . $user_id);
+        $current_history = get_user_meta($user_id, 'reading_history', true);
+        error_log('Current history: ' . print_r($current_history, true));
+    }
     
     $deleted = delete_user_meta($user_id, 'reading_history');
-    error_log('Delete result: ' . ($deleted ? 'success' : 'failed'));
+    
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        error_log('Delete result: ' . ($deleted ? 'success' : 'failed'));
+    }
 
     if ($deleted) {
         wp_send_json_success(array('message' => 'History cleared'));
@@ -539,8 +576,6 @@ function handle_clear_reading_history() {
         wp_send_json_error(array('message' => 'Failed to clear history'));
     }
 }
-add_action('wp_ajax_clear_reading_history', 'handle_clear_reading_history');
-
 // add_filter('posts_request', 'debug_query');
 function debug_query($input) {
     if (strpos($input, '_wp_manga_views') !== false) {
@@ -624,8 +659,8 @@ add_action('wp_ajax_filter_popular_manga', 'filter_popular_manga');
 add_action('wp_ajax_nopriv_filter_popular_manga', 'filter_popular_manga');
 
 // Add this temporarily at the top of your functions.php to clear the cache
-delete_transient('popular_manga_weekly');
-delete_transient('popular_manga_monthly');
+// delete_transient('popular_manga_weekly');
+// delete_transient('popular_manga_monthly');
 
 function filter_popular_manga() {
     if (!wp_doing_ajax()) return;
@@ -634,6 +669,14 @@ function filter_popular_manga() {
     
     $period = $_POST['period'];
     $meta_key = ($period === 'monthly') ? '_wp_manga_views' : '_wp_manga_week_views';
+    $transient_key = 'popular_manga_' . $period;
+    
+    // Try to get from cache first
+    $cached_content = get_transient($transient_key);
+    if ($cached_content !== false) {
+        wp_send_json_success($cached_content);
+        return;
+    }
     
     $args = array(
         'post_type' => 'wp-manga',
@@ -691,8 +734,28 @@ function filter_popular_manga() {
     wp_reset_postdata();
     
     $content = ob_get_clean();
+    
+    // Cache the content for 6 hours (21600 seconds)
+    set_transient($transient_key, $content, 6 * HOUR_IN_SECONDS);
+    
     wp_send_json_success($content);
 }
+
+// Add cache invalidation when a post is updated
+function invalidate_manga_caches($post_id, $post) {
+    // Only run for manga post type
+    if ($post->post_type !== 'wp-manga') {
+        return;
+    }
+    
+    // Clear popular manga caches
+    delete_transient('popular_manga_weekly');
+    delete_transient('popular_manga_monthly');
+    
+    // Clear latest chapters cache for this manga
+    delete_transient('latest_chapters_' . $post_id . '_3'); // Default is 3 chapters
+}
+add_action('save_post', 'invalidate_manga_caches', 10, 2);
 
 // Add ajaxurl to head
 add_action('wp_head', 'add_ajax_url');
