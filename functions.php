@@ -360,7 +360,12 @@ add_action('wp_ajax_nopriv_manga_submit_rating', 'handle_manga_rating');
 
 // Enqueue script and localize
 function enqueue_reading_history_scripts() {
-    // Only enqueue on pages with reading history
+    // Check if user is logged in FIRST before anything else
+    if (!is_user_logged_in()) {
+        return; // Exit immediately if not logged in
+    }
+    
+    // Then check if we're on the right page types
     if (is_page() || is_home()) {
         wp_enqueue_script(
             'reading-history', 
@@ -536,7 +541,7 @@ function handle_clear_reading_history() {
 }
 add_action('wp_ajax_clear_reading_history', 'handle_clear_reading_history');
 
-add_filter('posts_request', 'debug_query');
+// add_filter('posts_request', 'debug_query');
 function debug_query($input) {
     if (strpos($input, '_wp_manga_views') !== false) {
         error_log('Manga Query: ' . $input);
